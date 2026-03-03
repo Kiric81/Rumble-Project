@@ -1,0 +1,62 @@
+name: Build Working Rumble
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Interface
+        # Репозиторий с кнопками и дизайном
+        run: git clone https://github.com/RumbleOrg/Rumble .
+
+      - name: Checkout Engine
+        # Репозиторий с самим ByeDPI (движком)
+        run: git clone  https://github.com/hufrea/byedpi
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build Library
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+          # Компилируем движок в библиотеку для iOS
+          cd tunnel
+          gomobile bind -target ios -o ../Rumble.xcframework .
+          cd ..
+
+      - name: Create Project and Build
+        run: |
+          gem install xcodeproj
+          ruby -e "
+          require 'xcodeproj'
+          project = Xcodeproj::Project.new('Rumble.xcodeproj')
+          target = project.new_target(:application, 'Rumble', :ios, '15.0')
+          target.build_configurations.each { |c| c.build_settings['INFOPLIST_FILE'] = 'Info.plist' }
+          # Добавляем все исходники интерфейса
+          Dir.glob('*.{h,m}').each { |f| target.add_file_references([project.main_group.new_file(f)]) }
+          # Добавляем скомпилированный движок
+          fw_ref = project.main_group.new_file('Rumble.xcframework')
+          target.frameworks_build_phase.add_file_reference(fw_ref)
+          project.save
+          "
+          
+          # Создаем Info.plist
+          cat <<EOF > Info.plist
+          <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com">
+          <plist version="1.0"><dict><key>CFBundleExecutable</key><string>Rumble</string><key>CFBundleIdentifier</key><string>com.rumble.byedpi</string><key>CFBundleName</key><string>Rumble</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>1.0</string><key>LSRequiresIPhoneOS</key><true/><key>MinimumOSVersion</key><string>15.0</string></dict></plist>
+          EOF
+
+          xcodebuild -project Rumble.xcodeproj -scheme Rumble -sdk iphoneos -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
+          
+          mkdir -p Payload
+          cp -r build/Release-iphoneos/Rumble.app Payload/
+          zip -r Rumble.ipa Payload
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rumble-Working-IPA
+          path: Rumble.ipa
