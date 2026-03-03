@@ -6,24 +6,24 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout Interface
-        # Репозиторий с кнопками и дизайном
+        # Твоя ссылка на оболочку
         run: git clone https://github.com/RumbleOrg/Rumble .
 
       - name: Checkout Engine
-        # Репозиторий с самим ByeDPI (движком)
-        run: git clone  https://github.com/hufrea/byedpi
+        # Твоя ссылка на движок (клонируем в папку tunnel)
+        run: git clone https://github.com/hufrea/byedpi tunnel
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.25'
 
       - name: Build Library
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           gomobile init
-          # Компилируем движок в библиотеку для iOS
           cd tunnel
+          # Собираем мотор для приложения
           gomobile bind -target ios -o ../Rumble.xcframework .
           cd ..
 
@@ -35,9 +35,9 @@ jobs:
           project = Xcodeproj::Project.new('Rumble.xcodeproj')
           target = project.new_target(:application, 'Rumble', :ios, '15.0')
           target.build_configurations.each { |c| c.build_settings['INFOPLIST_FILE'] = 'Info.plist' }
-          # Добавляем все исходники интерфейса
+          # Добавляем файлы графической оболочки
           Dir.glob('*.{h,m}').each { |f| target.add_file_references([project.main_group.new_file(f)]) }
-          # Добавляем скомпилированный движок
+          # Добавляем скомпилированный движок к оболочке
           fw_ref = project.main_group.new_file('Rumble.xcframework')
           target.frameworks_build_phase.add_file_reference(fw_ref)
           project.save
@@ -45,14 +45,39 @@ jobs:
           
           # Создаем Info.plist
           cat <<EOF > Info.plist
-          <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com">
-          <plist version="1.0"><dict><key>CFBundleExecutable</key><string>Rumble</string><key>CFBundleIdentifier</key><string>com.rumble.byedpi</string><key>CFBundleName</key><string>Rumble</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>1.0</string><key>LSRequiresIPhoneOS</key><true/><key>MinimumOSVersion</key><string>15.0</string></dict></plist>
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>Rumble</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.rumble.byedpi</string>
+              <key>CFBundleName</key>
+              <string>Rumble</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
+              <key>MinimumOSVersion</key>
+              <string>15.0</string>
+          </dict>
+          </plist>
           EOF
 
-          xcodebuild -project Rumble.xcodeproj -scheme Rumble -sdk iphoneos -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
+          # Финальная сборка IPA
+          xcodebuild -project Rumble.xcodeproj -scheme Rumble -sdk iphoneos -configuration Release \
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
           
           mkdir -p Payload
-          cp -r build/Release-iphoneos/Rumble.app Payload/
+          APP_PATH=\$(find ~/Library/Developer/Xcode/DerivedData -name "Rumble.app" -type d | head -n 1)
+          if [ -z "\$APP_PATH" ]; then
+            APP_PATH=\$(find . -name "Rumble.app" -type d | head -n 1)
+          fi
+          
+          cp -r "\$APP_PATH" Payload/
           zip -r Rumble.ipa Payload
 
       - name: Upload
