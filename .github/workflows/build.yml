@@ -6,31 +6,23 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout Interface
-        # Твоя первая ссылка: Графическая оболочка
+        # Твоя первая ссылка (Оболочка)
         run: git clone https://github.com/RumbleOrg/Rumble .
 
       - name: Checkout Engine
-        # Твоя вторая ссылка: Движок ByeDPI
-        run: git clone https://github.com/hufrea/byedpi tunnel
+        # Твоя вторая ссылка (Движок ByeDPI)
+        run: git clone https://github.com/hufrea/byedpi engine
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - name: Build Engine Library
+      - name: Build Engine (C Core)
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          gomobile init
-          cd tunnel
-          # Инициализируем модуль для корректной сборки
-          go mod init github.com/hufrea/byedpi || echo "Already initialized"
-          go mod tidy
-          # Собираем мотор для приложения (xcframework)
-          gomobile bind -target ios -o ../Rumble.xcframework .
+          cd engine
+          # Компилируем движок ByeDPI из всех исходников C для iPhone (arm64)
+          xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=15.0 \
+          main.c conev.c desync.c extend.c mpool.c packets.c proxy.c \
+          -o byedpi-core
           cd ..
 
-      - name: Create Project and Link Engine
+      - name: Create Project and Bundle
         run: |
           gem install xcodeproj
           ruby -e "
@@ -38,11 +30,8 @@ jobs:
           project = Xcodeproj::Project.new('Rumble.xcodeproj')
           target = project.new_target(:application, 'Rumble', :ios, '15.0')
           target.build_configurations.each { |c| c.build_settings['INFOPLIST_FILE'] = 'Info.plist' }
-          # Добавляем все исходники интерфейса из первой ссылки
+          # Добавляем файлы интерфейса из твоей первой ссылки
           Dir.glob('*.{h,m}').each { |f| target.add_file_references([project.main_group.new_file(f)]) }
-          # Подключаем скомпилированный движок из второй ссылки к интерфейсу
-          fw_ref = project.main_group.new_file('Rumble.xcframework')
-          target.frameworks_build_phase.add_file_reference(fw_ref)
           project.save
           "
           
@@ -65,19 +54,25 @@ jobs:
 
       - name: Build Final IPA
         run: |
+          # Собираем интерфейс из первой ссылки
           xcodebuild -project Rumble.xcodeproj -scheme Rumble -sdk iphoneos -configuration Release \
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
           
           mkdir -p Payload
-          APP_PATH=\$(find ~/Library/Developer/Xcode/DerivedData -name "Rumble.app" -type d | head -n 1)
-          if [ -z "\$APP_PATH" ]; then
-            APP_PATH=\$(find . -name "Rumble.app" -type d | head -n 1)
+          # Ищем готовую папку приложения
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "Rumble.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find . -name "Rumble.app" -type d | head -n 1)
           fi
-          cp -r "\$APP_PATH" Payload/
+          
+          # Вкладываем скомпилированный движок из второй ссылки внутрь приложения
+          cp engine/byedpi-core "$APP_PATH/"
+          
+          cp -r "$APP_PATH" Payload/
           zip -r Rumble.ipa Payload
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: Rumble-Working-IPA
+          name: Rumble-With-Engine-IPA
           path: Rumble.ipa
