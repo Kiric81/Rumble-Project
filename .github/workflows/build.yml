@@ -6,11 +6,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout Interface
-        # Твоя ссылка на оболочку
+        # Твоя первая ссылка: Графическая оболочка
         run: git clone https://github.com/RumbleOrg/Rumble .
 
       - name: Checkout Engine
-        # Твоя ссылка на движок (клонируем в папку tunnel)
+        # Твоя вторая ссылка: Движок ByeDPI
         run: git clone https://github.com/hufrea/byedpi tunnel
 
       - name: Setup Go
@@ -18,16 +18,19 @@ jobs:
         with:
           go-version: '1.25'
 
-      - name: Build Library
+      - name: Build Engine Library
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest
           gomobile init
           cd tunnel
-          # Собираем мотор для приложения
+          # Инициализируем модуль для корректной сборки
+          go mod init github.com/hufrea/byedpi || echo "Already initialized"
+          go mod tidy
+          # Собираем мотор для приложения (xcframework)
           gomobile bind -target ios -o ../Rumble.xcframework .
           cd ..
 
-      - name: Create Project and Build
+      - name: Create Project and Link Engine
         run: |
           gem install xcodeproj
           ruby -e "
@@ -35,9 +38,9 @@ jobs:
           project = Xcodeproj::Project.new('Rumble.xcodeproj')
           target = project.new_target(:application, 'Rumble', :ios, '15.0')
           target.build_configurations.each { |c| c.build_settings['INFOPLIST_FILE'] = 'Info.plist' }
-          # Добавляем файлы графической оболочки
+          # Добавляем все исходники интерфейса из первой ссылки
           Dir.glob('*.{h,m}').each { |f| target.add_file_references([project.main_group.new_file(f)]) }
-          # Добавляем скомпилированный движок к оболочке
+          # Подключаем скомпилированный движок из второй ссылки к интерфейсу
           fw_ref = project.main_group.new_file('Rumble.xcframework')
           target.frameworks_build_phase.add_file_reference(fw_ref)
           project.save
@@ -49,25 +52,19 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com">
           <plist version="1.0">
           <dict>
-              <key>CFBundleExecutable</key>
-              <string>Rumble</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.rumble.byedpi</string>
-              <key>CFBundleName</key>
-              <string>Rumble</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>LSRequiresIPhoneOS</key>
-              <true/>
-              <key>MinimumOSVersion</key>
-              <string>15.0</string>
+              <key>CFBundleExecutable</key><string>Rumble</string>
+              <key>CFBundleIdentifier</key><string>com.rumble.byedpi</string>
+              <key>CFBundleName</key><string>Rumble</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleShortVersionString</key><string>1.0</string>
+              <key>LSRequiresIPhoneOS</key><true/>
+              <key>MinimumOSVersion</key><string>15.0</string>
           </dict>
           </plist>
           EOF
 
-          # Финальная сборка IPA
+      - name: Build Final IPA
+        run: |
           xcodebuild -project Rumble.xcodeproj -scheme Rumble -sdk iphoneos -configuration Release \
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO clean build
           
@@ -76,7 +73,6 @@ jobs:
           if [ -z "\$APP_PATH" ]; then
             APP_PATH=\$(find . -name "Rumble.app" -type d | head -n 1)
           fi
-          
           cp -r "\$APP_PATH" Payload/
           zip -r Rumble.ipa Payload
 
